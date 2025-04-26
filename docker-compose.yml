@@ -1,0 +1,61 @@
+
+services:
+  postgres:
+    image: postgres:13-alpine
+    container_name: lessons_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-lessons_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lessons_network
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: lessons_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - lessons_network    
+
+  app:
+    build: .
+    container_name: lessons_app
+    depends_on:
+      [postgres]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-lessons_db}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    networks:
+      - lessons_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  lessons_network:
+    driver: bridge

@@ -1,0 +1,27 @@
+# Зависимости
+node_modules/
+
+# Собранные файлы
+dist/
+
+# Логи
+logs
+*.log
+npm-debug.log*
+
+# Файлы окружения
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Файлы редакторов
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Операционные системы
+.DS_Store
+Thumbs.db
