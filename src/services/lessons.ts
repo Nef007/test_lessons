@@ -83,107 +83,136 @@ class LessonsService {
       where.status = status;
     }
 
-    // Фильтр по учителям
-    const teacherWhere: WhereOptions<LessonTeacher> = {};
+    // Фильтр по teacherIds через подзапрос
     if (teacherIds) {
       const ids = teacherIds.split(',').map((id) => parseInt(id.trim()));
-      teacherWhere.teacher_id = {
-        [Op.in]: ids,
-      };
+      
+      const lessonsWithTeachers = await LessonTeacher.findAll({
+        attributes: ['lesson_id'],
+        where: {
+          teacher_id: { [Op.in]: ids }
+        },
+        group: ['lesson_id']
+      });
+      
+      const lessonIds = lessonsWithTeachers.map(lt => lt.lesson_id);
+      
+      if (lessonIds.length === 0) {
+        return [];
+      }
+      
+      where.id = { [Op.in]: lessonIds };
     }
 
-    // Основной запрос
-    const queryOptions: FindAndCountOptions = {
+
+      // Фильтр по количеству студентов
+      if (studentsCount) {
+        const studentCountSubquery = `(
+          SELECT COUNT(ls.student_id) 
+          FROM lesson_students ls 
+          WHERE ls.lesson_id = "Lesson"."id"
+        )`;
+  
+        if (studentsCount.includes(',')) {
+          const [min, max] = studentsCount
+            .split(',')
+            .map((num) => parseInt(num.trim()));
+          where[Op.and as any] = [
+            literal(`${studentCountSubquery} BETWEEN ${min} AND ${max}`),
+          ];
+        } else {
+          const count = parseInt(studentsCount);
+          where[Op.and as any] = [literal(`${studentCountSubquery} = ${count}`)];
+        }
+      }
+
+
+      // Получаем только основные данные уроков
+    const lessons = await Lesson.findAll({
       attributes: ['id', 'date', 'title', 'status'],
       where,
-      include: [
-        {
-          model: LessonTeacher,
-          as: 'lessonTeachers',
-          where: teacherWhere,
-          required: !!teacherIds,
-          include: [
-            {
-              model: Teacher,
-              as: 'teacher',
-              attributes: ['id', 'name'],
-            },
-          ],
-        },
-        {
-          model: LessonStudent,
-          as: 'lessonStudents',
-          required: false,
-          include: [
-            {
-              model: Student,
-              as: 'student',
-              attributes: ['id', 'name'],
-            },
-          ],
-        },
-      ],
-      distinct: true,
       limit: lessonsPerPage,
       offset: (page - 1) * lessonsPerPage,
       order: [
         ['id', 'ASC'],
         ['date', 'ASC'],
       ],
-      subQuery: false,
-    };
+    });
 
-    // Фильтр по количеству студентов
-    if (studentsCount) {
-      const studentCountSubquery = `(
-        SELECT COUNT(ls.student_id) 
-        FROM lesson_students ls 
-        WHERE ls.lesson_id = "Lesson"."id"
-      )`;
-
-      if (studentsCount.includes(',')) {
-        const [min, max] = studentsCount
-          .split(',')
-          .map((num) => parseInt(num.trim()));
-        where[Op.and as any] = [
-          literal(`${studentCountSubquery} BETWEEN ${min} AND ${max}`),
-        ];
-      } else {
-        const count = parseInt(studentsCount);
-        where[Op.and as any] = [literal(`${studentCountSubquery} = ${count}`)];
-      }
+    if (lessons.length === 0) {
+      return [];
     }
 
-    const lessons = await Lesson.findAll(queryOptions);
 
-    // Формируем ответ
+    const lessonIds = lessons.map(lesson => lesson.id);
 
-    return lessons.map((lesson) => {
-      const lessonData = lesson.get({ plain: true });
 
-      const { lessonStudents = [], lessonTeachers = [] } = lessonData;
-
-      return {
-        id: lesson.id,
-        date: String(lesson.date).split('T')[0],
-        title: lesson.title,
-        status: lesson.status,
-        visitCount: lessonStudents.reduce(
-          (count: number, ls: ILessonStudent) => count + (ls.visit ? 1 : 0),
-          0,
-        ),
-        students: lessonStudents.map((ls: ILessonStudent) => ({
-          id: ls.student.id,
-          name: ls.student.name,
-          visit: ls.visit,
-        })),
-        teachers: lessonTeachers.map((lt: ILessonTeacher) => ({
-          id: lt.teacher.id,
-          name: lt.teacher.name,
-        })),
-      };
+     // Получаем преподавателей для найденных уроков
+     const lessonTeachers = await LessonTeacher.findAll({
+      where: {
+        lesson_id: { [Op.in]: lessonIds }
+      },
+      include: [{
+        model: Teacher,
+        as: 'teacher',
+        attributes: ['id', 'name'],
+      }],
     });
-  }
-}
 
-export default new LessonsService();
+    // Получаем студентов для найденных уроков
+    const lessonStudents = await LessonStudent.findAll({
+      where: {
+        lesson_id: { [Op.in]: lessonIds }
+      },
+      include: [{
+        model: Student,
+        as: 'student',
+        attributes: ['id', 'name'],
+      }],
+    });
+
+        // Группируем преподавателей и студентов по урокам
+        const teachersByLesson: Record<number, ILessonTeacher[]> = {};
+        const studentsByLesson: Record<number, ILessonStudent[]> = {};
+
+        lessonTeachers.forEach(lt => {
+          if (!teachersByLesson[lt.lesson_id]) {
+            teachersByLesson[lt.lesson_id] = [];
+          }
+          teachersByLesson[lt.lesson_id].push(lt.get({ plain: true }));
+        });
+    
+        lessonStudents.forEach(ls => {
+          if (!studentsByLesson[ls.lesson_id]) {
+            studentsByLesson[ls.lesson_id] = [];
+          }
+          studentsByLesson[ls.lesson_id].push(ls.get({ plain: true }));
+        });
+    
+        // Формируем ответ
+        return lessons.map(lesson => {
+          const lessonId = lesson.id;
+          const teachers = teachersByLesson[lessonId] || [];
+          const students = studentsByLesson[lessonId] || [];
+    
+          return {
+            id: lesson.id,
+            date: String(lesson.date).split('T')[0],
+            title: lesson.title,
+            status: lesson.status,
+            visitCount: students.reduce((count, ls) => count + (ls.visit ? 1 : 0), 0),
+            students: students.map(ls => ({
+              id: ls.student.id,
+              name: ls.student.name,
+              visit: ls.visit,
+            })),
+            teachers: teachers.map(lt => ({
+              id: lt.teacher.id,
+              name: lt.teacher.name,
+            })),
+          };
+        });
+      }
+    }
+    
+    export default new LessonsService();
