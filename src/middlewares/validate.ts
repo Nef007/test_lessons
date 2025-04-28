@@ -44,7 +44,5 @@ export const validateLessonsParams: RequestHandler = (req, res, next) => {
     });
   }
 
-  // Присваиваем провалидированные данные к запросу
-  req.query = result.data;
   next();
 };
