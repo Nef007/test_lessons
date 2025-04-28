@@ -11,7 +11,7 @@ export interface LessonsRequestQuery {
 }
 
 const getLessons: RequestHandler = async (
-  req: Request,
+  req: Request<{}, {}, {}, LessonsRequestQuery>,
   res: Response,
   next: NextFunction,
 ) => {
